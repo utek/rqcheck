@@ -1,22 +1,26 @@
 use clap::Parser;
+use std::fs;
+use requirements;
 
-/// Simple program to greet a person
+/// Simple check for new versions of python packages (pypi.org)
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
-    /// Name of the person to greet
+    /// Requirements file name
     #[arg(short, long)]
-    name: String,
-
-    /// Number of times to greet
-    #[arg(short, long, default_value_t = 1)]
-    count: u8,
+    file_name: String,
 }
 
 fn main() {
     let args = Args::parse();
+    println!("Checking file {}", args.file_name);
 
-    for _ in 0..args.count {
-        println!("Hello {}!", args.name)
+    let contents = fs::read_to_string(args.file_name)
+        .expect("Should have been able to read the file");
+    let reqs = requirements::parse_str(&contents).unwrap();
+
+    for req in reqs.into_iter() {
+        println!("{:?}", req);
     }
+
 }
