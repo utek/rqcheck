@@ -5,5 +5,5 @@ edition = "2021"
 
 [dependencies]
 clap = { version = "4.5.1", features = ["derive"] }
-requirements = "0.3.0"
+requirements = { path = "libs/requirements"}
 

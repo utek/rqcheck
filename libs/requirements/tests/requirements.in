@@ -1,0 +1,4 @@
+-r base.in
+
+aiohttp
+passlib[argon2,chacha]
