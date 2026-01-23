@@ -1,0 +1,20 @@
+# rqcheck Configuration File
+# This file is optional - all values have sensible defaults
+
+# Number of concurrent requests to PyPI (default: 10)
+batch_size = 10
+
+# Timeout for HTTP requests in seconds (default: 30)
+timeout_seconds = 30
+
+# Maximum number of retry attempts for failed requests (default: 3)
+max_retries = 3
+
+# Initial retry delay in milliseconds (uses exponential backoff) (default: 1000)
+retry_delay_ms = 1000
+
+# PyPI base URL (default: "https://pypi.org/pypi")
+pypi_base_url = "https://pypi.org/pypi"
+
+# Enable verbose logging (default: false)
+verbose = false
