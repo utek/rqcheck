@@ -136,14 +136,19 @@ impl Config {
         }
 
         if let Ok(val) = std::env::var("RQCHECK_MAX_VERSIONS") {
-            if let Ok(max_versions) = val.parse() {
-                self.max_versions_to_check = max_versions;
+            match val.parse::<usize>() {
+                Ok(max_versions) => {
+                    self.max_versions_to_check = max_versions;
+                }
+                Err(_) => {
+                    log::warn!("Invalid RQCHECK_MAX_VERSIONS value '{}', using default", val);
+                }
             }
         }
     }
 
     /// Validate configuration values
-    fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
         if self.batch_size == 0 {
             return Err(RqCheckError::ConfigError(
                 "batch_size must be greater than 0".to_string(),
@@ -161,6 +166,19 @@ impl Config {
             return Err(RqCheckError::ConfigError(
                 "timeout_seconds must be greater than 0".to_string(),
             ));
+        }
+
+        if self.max_versions_to_check == 0 {
+            return Err(RqCheckError::ConfigError(
+                "max_versions_to_check must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.max_versions_to_check > 1000 {
+            log::warn!(
+                "Large max_versions_to_check ({}) may impact performance",
+                self.max_versions_to_check
+            );
         }
 
         Ok(())
@@ -352,7 +370,16 @@ verbose = true
     }
 
     #[test]
+    #[serial]
     fn test_partial_toml() {
+        // Cleanup env vars to avoid pollution from other tests
+        env::remove_var("RQCHECK_BATCH_SIZE");
+        env::remove_var("RQCHECK_TIMEOUT");
+        env::remove_var("RQCHECK_MAX_RETRIES");
+        env::remove_var("RQCHECK_VERBOSE");
+        env::remove_var("RQCHECK_PYPI_URL");
+        env::remove_var("RQCHECK_MAX_VERSIONS");
+
         // Test that missing fields use defaults
         let mut temp_file = NamedTempFile::new().unwrap();
         writeln!(temp_file, "batch_size = 15").unwrap();

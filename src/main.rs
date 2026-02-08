@@ -48,6 +48,7 @@ async fn main() -> Result<()> {
     // Load configuration
     let mut config = Config::load(args.config.as_deref())?;
     config.apply_cli_overrides(args.batch_size, args.timeout, args.max_versions, args.verbose);
+    config.validate()?;
 
     if config.verbose {
         log::info!("Configuration: {:?}", config);

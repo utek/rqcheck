@@ -49,9 +49,9 @@ pub fn analyze_versions(
     let mut valid_versions: Vec<Version> = releases
         .iter()
         .filter_map(|(version_str, release_infos)| {
-            // Skip if any release info indicates yanked
-            if release_infos.iter().any(|info| info.yanked) {
-                debug!("Skipping yanked version: {}", version_str);
+            // Skip version only if all release files are yanked, or if there are no files
+            if release_infos.is_empty() || release_infos.iter().all(|info| info.yanked) {
+                debug!("Skipping yanked or empty version: {}", version_str);
                 return None;
             }
 
@@ -76,8 +76,32 @@ pub fn analyze_versions(
     // Sort in descending order (newest first)
     valid_versions.sort_by(|a, b| b.cmp(a));
 
-    // Limit to max_versions
-    valid_versions.truncate(max_versions);
+    // Store all valid versions before truncating
+    let all_valid_versions = valid_versions.clone();
+
+    // Limit to max_versions for analysis, but ensure we keep at least one from current major
+    if max_versions > 0 && valid_versions.len() > max_versions {
+        valid_versions.truncate(max_versions);
+
+        // Check if we still have a version from the current major line
+        let has_current_major = valid_versions.iter().any(|v| v.major == current.major);
+
+        if !has_current_major {
+            // Try to find a version from the current major line in all valid versions
+            if let Some(same_major) = all_valid_versions
+                .iter()
+                .find(|v| v.major == current.major && **v > current)
+            {
+                // Replace the last element with the same-major candidate
+                if !valid_versions.is_empty() {
+                    valid_versions.pop();
+                    valid_versions.push(same_major.clone());
+                    // Re-sort to maintain descending order
+                    valid_versions.sort_by(|a, b| b.cmp(a));
+                }
+            }
+        }
+    }
 
     debug!("Valid versions after filtering: {:?}", valid_versions);
 
@@ -97,13 +121,31 @@ pub fn analyze_versions(
     // Check if there's an update available
     let has_update = latest > current;
 
-    // Find latest major version (different from latest)
+    // Find latest major version (newest version in the next major line after current)
     let latest_major = if has_update {
-        valid_versions
+        // First find all major versions greater than current
+        let higher_majors: Vec<_> = valid_versions
             .iter()
-            .skip(1) // Skip the overall latest
-            .find(|v| v.major != latest.major)
-            .map(|v| v.to_string())
+            .filter(|v| v.major > current.major)
+            .collect();
+
+        if !higher_majors.is_empty() {
+            // Find the next major version number (smallest major > current.major)
+            let next_major = higher_majors
+                .iter()
+                .map(|v| v.major)
+                .min()
+                .unwrap();
+
+            // Find the newest version in that next major line
+            higher_majors
+                .iter()
+                .filter(|v| v.major == next_major)
+                .max_by(|a, b| a.cmp(b))
+                .map(|v| v.to_string())
+        } else {
+            None
+        }
     } else {
         None
     };
@@ -155,7 +197,7 @@ mod tests {
         let analysis = analyze_versions("2.0.0", &releases, 10);
 
         assert_eq!(analysis.latest, "3.0.0");
-        assert_eq!(analysis.latest_major, Some("2.5.0".to_string()));
+        assert_eq!(analysis.latest_major, Some("3.0.0".to_string())); // Major upgrade from current (2.x -> 3.x)
         assert_eq!(analysis.latest_minor, Some("2.5.0".to_string())); // Latest in current major (2.x)
         assert!(analysis.has_update);
     }
@@ -166,7 +208,7 @@ mod tests {
         let analysis = analyze_versions("2.0.0", &releases, 10);
 
         assert_eq!(analysis.latest, "2.5.0");
-        assert_eq!(analysis.latest_major, Some("1.9.0".to_string()));
+        assert_eq!(analysis.latest_major, None); // No major upgrade available (no version > 2.x)
         assert_eq!(analysis.latest_minor, Some("2.5.0".to_string()));
         assert!(analysis.has_update);
     }
@@ -177,7 +219,7 @@ mod tests {
         let analysis = analyze_versions("2.0.0", &releases, 10);
 
         assert_eq!(analysis.latest, "2.0.5");
-        assert_eq!(analysis.latest_major, Some("1.9.0".to_string()));
+        assert_eq!(analysis.latest_major, None); // No major upgrade available
         assert_eq!(analysis.latest_minor, Some("2.0.5".to_string()));
         assert!(analysis.has_update);
     }
@@ -238,7 +280,7 @@ mod tests {
 
         // Should only consider top 5 versions: 5.0.0, 4.0.0, 3.0.0, 2.5.0, 2.4.0
         assert_eq!(analysis.latest, "5.0.0");
-        assert_eq!(analysis.latest_major, Some("4.0.0".to_string()));
+        assert_eq!(analysis.latest_major, Some("3.0.0".to_string())); // Newest in next major (3.x)
         assert_eq!(analysis.latest_minor, Some("2.5.0".to_string()));
     }
 
@@ -287,7 +329,7 @@ mod tests {
         let analysis = analyze_versions("2.0.0", &releases, 10);
 
         assert_eq!(analysis.latest, "2.5.0");
-        assert_eq!(analysis.latest_major, Some("1.9.0".to_string()));
+        assert_eq!(analysis.latest_major, None); // No major upgrade (latest is same major)
         assert_eq!(analysis.latest_minor, Some("2.5.0".to_string()));
     }
 }

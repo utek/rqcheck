@@ -92,17 +92,29 @@ async fn check_single_package(
     // Fetch PyPI response with releases data
     let pypi_response = fetch_pypi_response(&req.name, client, config).await?;
 
-    // Convert ReleaseInfo to version::ReleaseInfo
-    let releases: HashMap<String, Vec<version::ReleaseInfo>> = pypi_response
+    // Capture the version reported in PyPI's `info` section as a fallback
+    let info_version = pypi_response.info.version.clone();
+
+    // Convert ReleaseInfo to version::ReleaseInfo and normalize version keys
+    let mut releases: HashMap<String, Vec<version::ReleaseInfo>> = pypi_response
         .releases
         .into_iter()
         .map(|(version, infos)| {
+            // Normalize version string by removing leading 'v' or 'V'
+            let normalized_version = if version.starts_with('v') || version.starts_with('V') {
+                version[1..].to_string()
+            } else {
+                version
+            };
             (
-                version,
+                normalized_version,
                 infos.into_iter().map(|info| version::ReleaseInfo { yanked: info.yanked }).collect(),
             )
         })
         .collect();
+
+    // Ensure the `info.version` is considered as a candidate latest version
+    releases.entry(info_version).or_insert_with(Vec::new);
 
     // Analyze versions
     let analysis = version::analyze_versions(&req.version, &releases, config.max_versions_to_check);
@@ -153,7 +165,7 @@ async fn fetch_pypi_response(
     }
 
     Err(last_error.unwrap_or_else(|| RqCheckError::InvalidRequirement(
-        format!("Failed to fetch version for package '{}' after {} retries", package_name, config.max_retries)
+        format!("Failed to fetch PyPI package metadata for '{}' after {} retries", package_name, config.max_retries)
     )))
 }
 
