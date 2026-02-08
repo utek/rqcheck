@@ -1,6 +1,7 @@
 pub mod checker;
 pub mod config;
 pub mod error;
+pub mod version;
 
 use checker::{check_packages_batched, PackageCheckResult, PackageRequirement};
 use clap::Parser;
@@ -28,6 +29,10 @@ struct Args {
     #[arg(short, long)]
     timeout: Option<u64>,
 
+    /// Maximum number of versions to check (default: 10)
+    #[arg(short = 'n', long)]
+    max_versions: Option<usize>,
+
     /// Enable verbose logging
     #[arg(short, long)]
     verbose: bool,
@@ -42,7 +47,8 @@ async fn main() -> Result<()> {
 
     // Load configuration
     let mut config = Config::load(args.config.as_deref())?;
-    config.apply_cli_overrides(args.batch_size, args.timeout, args.verbose);
+    config.apply_cli_overrides(args.batch_size, args.timeout, args.max_versions, args.verbose);
+    config.validate()?;
 
     if config.verbose {
         log::info!("Configuration: {:?}", config);
@@ -148,10 +154,40 @@ fn display_results(results: &[PackageCheckResult]) {
     } else {
         log::info!("Found {} package(s) with updates:", updates.len());
         for result in updates {
-            println!(
-                "{} {} {}",
-                result.name, result.old_version, result.new_version
-            );
+            // Determine if latest_major and latest_minor are the same
+            let major_minor_same = match (&result.latest_major_version, &result.latest_minor_version) {
+                (Some(major), Some(minor)) => major == minor,
+                _ => false,
+            };
+
+            let mut output = format!("{} {}", result.name, result.current_version);
+
+            // If latest_major and latest_minor are different, show only those two
+            // If they are the same, show latest along with the versions
+            if major_minor_same {
+                // Show latest when major and minor are the same
+                output.push_str(&format!(" -> latest: {}", result.latest_version));
+
+                if let Some(ref latest_major) = result.latest_major_version {
+                    output.push_str(&format!(", latest major: {}", latest_major));
+                }
+            } else {
+                // Show only latest_major and latest_minor when they differ
+                output.push_str(" ->");
+
+                if let Some(ref latest_major) = result.latest_major_version {
+                    output.push_str(&format!(" latest major: {}", latest_major));
+                }
+
+                if let Some(ref latest_minor) = result.latest_minor_version {
+                    if result.latest_major_version.is_some() {
+                        output.push_str(",");
+                    }
+                    output.push_str(&format!(" latest minor: {}", latest_minor));
+                }
+            }
+
+            println!("{}", output);
         }
     }
 }
@@ -260,14 +296,18 @@ mod tests {
         let results = vec![
             PackageCheckResult {
                 name: "requests".to_string(),
-                old_version: "2.28.0".to_string(),
-                new_version: "2.32.0".to_string(),
+                current_version: "2.28.0".to_string(),
+                latest_version: "2.32.0".to_string(),
+                latest_major_version: None,
+                latest_minor_version: Some("2.32.0".to_string()),
                 has_update: true,
             },
             PackageCheckResult {
                 name: "flask".to_string(),
-                old_version: "2.3.0".to_string(),
-                new_version: "2.3.0".to_string(),
+                current_version: "2.3.0".to_string(),
+                latest_version: "2.3.0".to_string(),
+                latest_major_version: None,
+                latest_minor_version: None,
                 has_update: false,
             },
         ];
@@ -281,8 +321,10 @@ mod tests {
         let results = vec![
             PackageCheckResult {
                 name: "requests".to_string(),
-                old_version: "2.28.0".to_string(),
-                new_version: "2.28.0".to_string(),
+                current_version: "2.28.0".to_string(),
+                latest_version: "2.28.0".to_string(),
+                latest_major_version: None,
+                latest_minor_version: None,
                 has_update: false,
             },
         ];

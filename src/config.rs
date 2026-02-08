@@ -21,6 +21,9 @@ pub struct Config {
     #[serde(default = "default_pypi_base_url")]
     pub pypi_base_url: String,
 
+    #[serde(default = "default_max_versions_to_check")]
+    pub max_versions_to_check: usize,
+
     #[serde(default)]
     pub verbose: bool,
 }
@@ -46,6 +49,10 @@ fn default_pypi_base_url() -> String {
     "https://pypi.org/pypi".to_string()
 }
 
+fn default_max_versions_to_check() -> usize {
+    10
+}
+
 impl Default for Config {
     fn default() -> Self {
         Config {
@@ -54,6 +61,7 @@ impl Default for Config {
             max_retries: default_max_retries(),
             retry_delay_ms: default_retry_delay_ms(),
             pypi_base_url: default_pypi_base_url(),
+            max_versions_to_check: default_max_versions_to_check(),
             verbose: false,
         }
     }
@@ -126,10 +134,21 @@ impl Config {
         if let Ok(url) = std::env::var("RQCHECK_PYPI_URL") {
             self.pypi_base_url = url;
         }
+
+        if let Ok(val) = std::env::var("RQCHECK_MAX_VERSIONS") {
+            match val.parse::<usize>() {
+                Ok(max_versions) => {
+                    self.max_versions_to_check = max_versions;
+                }
+                Err(_) => {
+                    log::warn!("Invalid RQCHECK_MAX_VERSIONS value '{}', using default", val);
+                }
+            }
+        }
     }
 
     /// Validate configuration values
-    fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
         if self.batch_size == 0 {
             return Err(RqCheckError::ConfigError(
                 "batch_size must be greater than 0".to_string(),
@@ -149,6 +168,19 @@ impl Config {
             ));
         }
 
+        if self.max_versions_to_check == 0 {
+            return Err(RqCheckError::ConfigError(
+                "max_versions_to_check must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.max_versions_to_check > 1000 {
+            log::warn!(
+                "Large max_versions_to_check ({}) may impact performance",
+                self.max_versions_to_check
+            );
+        }
+
         Ok(())
     }
 
@@ -157,6 +189,7 @@ impl Config {
         &mut self,
         batch_size: Option<usize>,
         timeout: Option<u64>,
+        max_versions: Option<usize>,
         verbose: bool,
     ) {
         if let Some(size) = batch_size {
@@ -165,6 +198,10 @@ impl Config {
 
         if let Some(t) = timeout {
             self.timeout_seconds = t;
+        }
+
+        if let Some(max_v) = max_versions {
+            self.max_versions_to_check = max_v;
         }
 
         if verbose {
@@ -189,6 +226,7 @@ mod tests {
         assert_eq!(config.max_retries, 3);
         assert_eq!(config.retry_delay_ms, 1000);
         assert_eq!(config.pypi_base_url, "https://pypi.org/pypi");
+        assert_eq!(config.max_versions_to_check, 10);
         assert_eq!(config.verbose, false);
     }
 
@@ -276,10 +314,11 @@ verbose = true
     #[test]
     fn test_cli_override() {
         let mut config = Config::default();
-        config.apply_cli_overrides(Some(25), Some(90), true);
+        config.apply_cli_overrides(Some(25), Some(90), Some(20), true);
 
         assert_eq!(config.batch_size, 25);
         assert_eq!(config.timeout_seconds, 90);
+        assert_eq!(config.max_versions_to_check, 20);
         assert_eq!(config.verbose, true);
     }
 
@@ -323,7 +362,7 @@ verbose = true
         assert_eq!(config.batch_size, 30); // Env overrides file
 
         // Apply CLI override to 40
-        config.apply_cli_overrides(Some(40), None, false);
+        config.apply_cli_overrides(Some(40), None, None, false);
         assert_eq!(config.batch_size, 40); // CLI overrides env
 
         // Cleanup
@@ -331,7 +370,16 @@ verbose = true
     }
 
     #[test]
+    #[serial]
     fn test_partial_toml() {
+        // Cleanup env vars to avoid pollution from other tests
+        env::remove_var("RQCHECK_BATCH_SIZE");
+        env::remove_var("RQCHECK_TIMEOUT");
+        env::remove_var("RQCHECK_MAX_RETRIES");
+        env::remove_var("RQCHECK_VERBOSE");
+        env::remove_var("RQCHECK_PYPI_URL");
+        env::remove_var("RQCHECK_MAX_VERSIONS");
+
         // Test that missing fields use defaults
         let mut temp_file = NamedTempFile::new().unwrap();
         writeln!(temp_file, "batch_size = 15").unwrap();
