@@ -28,7 +28,7 @@ pub use crate::requirements::Requirement;
 pub use parser::parse;
 
 /// Parses requirements from a string
-pub fn parse_str(content: &str) -> Result<Vec<Requirement>, String> {
+pub fn parse_str(content: &str) -> Result<Vec<Requirement<'_>>, String> {
     Ok(parse(content).map(Iterator::collect)?)
 }
 

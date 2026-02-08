@@ -1,12 +1,7 @@
-pub mod checker;
-pub mod config;
-pub mod error;
-pub mod version;
-
-use checker::{check_packages_batched, PackageCheckResult, PackageRequirement};
+use rqcheck::checker::{check_packages_batched, PackageCheckResult, PackageRequirement};
+use rqcheck::config::Config;
+use rqcheck::error::{Result, RqCheckError};
 use clap::Parser;
-use config::Config;
-use error::{Result, RqCheckError};
 use std::fs;
 
 /// Simple check for new versions of python packages (pypi.org)
