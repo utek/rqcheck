@@ -117,7 +117,7 @@ async fn check_single_package(
     releases.entry(info_version).or_insert_with(Vec::new);
 
     // Analyze versions
-    let analysis = version::analyze_versions(&req.version, &releases, config.max_versions_to_check);
+    let analysis = version::analyze_versions(&req.name, &req.version, &releases, config.max_versions_to_check);
 
     Ok(PackageCheckResult {
         name: req.name,
