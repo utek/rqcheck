@@ -133,7 +133,8 @@ pub fn analyze_versions(
         }
     };
 
-    // Filter and sort versions
+    // Filter and sort versions, preserving original version strings from PyPI
+    let mut original_versions: HashMap<Version, String> = HashMap::new();
     let mut valid_versions: Vec<Version> = releases
         .iter()
         .filter_map(|(version_str, release_infos)| {
@@ -151,6 +152,7 @@ pub fn analyze_versions(
                         debug!("{}: skipping pre-release version: {}", package_name, version_str);
                         return None;
                     }
+                    original_versions.insert(v.clone(), version_str.clone());
                     Some(v)
                 }
                 None => {
@@ -230,7 +232,7 @@ pub fn analyze_versions(
                 .iter()
                 .filter(|v| v.major == next_major)
                 .max_by(|a, b| a.cmp(b))
-                .map(|v| v.to_string())
+                .map(|v| original_versions.get(v).cloned().unwrap_or_else(|| v.to_string()))
         } else {
             None
         }
@@ -243,7 +245,7 @@ pub fn analyze_versions(
         valid_versions
             .iter()
             .find(|v| v.major == current.major && **v > current)
-            .map(|v| v.to_string())
+            .map(|v| original_versions.get(v).cloned().unwrap_or_else(|| v.to_string()))
     } else {
         None
     };
@@ -254,7 +256,7 @@ pub fn analyze_versions(
     );
 
     VersionAnalysis {
-        latest: latest.to_string(),
+        latest: original_versions.get(&latest).cloned().unwrap_or_else(|| latest.to_string()),
         latest_major,
         latest_minor,
         has_update,
@@ -510,7 +512,7 @@ mod tests {
         releases.insert("0.8.0".to_string(), vec![ReleaseInfo { yanked: false }]);
 
         let analysis = analyze_versions("test-package", "0.8.0", &releases, 10);
-        assert_eq!(analysis.latest, "0.10.0");
+        assert_eq!(analysis.latest, "0.10");
         assert!(analysis.has_update);
     }
 }
