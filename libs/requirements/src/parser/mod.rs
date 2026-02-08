@@ -77,7 +77,7 @@ fn parse_package(parsed: Pair<'_, Rule>) -> Requirement<'_> {
     package
 }
 
-pub fn parse(unparsed_file: &str) -> Result<impl Iterator<Item = Requirement>, String> {
+pub fn parse(unparsed_file: &str) -> Result<impl Iterator<Item = Requirement<'_>>, String> {
     let req_file = match RequirementParser::parse(Rule::requirement_file, unparsed_file) {
         Ok(mut rules) => rules.next().unwrap(),
         Err(_) => return Err(String::from("Failed to parse requirements")),
