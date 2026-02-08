@@ -154,19 +154,37 @@ fn display_results(results: &[PackageCheckResult]) {
     } else {
         log::info!("Found {} package(s) with updates:", updates.len());
         for result in updates {
-            let mut output = format!(
-                "{} {} -> latest: {}",
-                result.name, result.current_version, result.latest_version
-            );
+            // Determine if latest_major and latest_minor are the same
+            let major_minor_same = match (&result.latest_major_version, &result.latest_minor_version) {
+                (Some(major), Some(minor)) => major == minor,
+                _ => false,
+            };
 
-            // Add latest major version if different from latest
-            if let Some(ref latest_major) = result.latest_major_version {
-                output.push_str(&format!(", latest major: {}", latest_major));
-            }
+            let mut output = format!("{} {}", result.name, result.current_version);
 
-            // Add latest minor version if available
-            if let Some(ref latest_minor) = result.latest_minor_version {
-                output.push_str(&format!(", latest minor: {}", latest_minor));
+            // If latest_major and latest_minor are different, show only those two
+            // If they are the same, show latest along with the versions
+            if major_minor_same {
+                // Show latest when major and minor are the same
+                output.push_str(&format!(" -> latest: {}", result.latest_version));
+
+                if let Some(ref latest_major) = result.latest_major_version {
+                    output.push_str(&format!(", latest major: {}", latest_major));
+                }
+            } else {
+                // Show only latest_major and latest_minor when they differ
+                output.push_str(" ->");
+
+                if let Some(ref latest_major) = result.latest_major_version {
+                    output.push_str(&format!(" latest major: {}", latest_major));
+                }
+
+                if let Some(ref latest_minor) = result.latest_minor_version {
+                    if result.latest_major_version.is_some() {
+                        output.push_str(",");
+                    }
+                    output.push_str(&format!(" latest minor: {}", latest_minor));
+                }
             }
 
             println!("{}", output);
