@@ -21,6 +21,9 @@ pub struct Config {
     #[serde(default = "default_pypi_base_url")]
     pub pypi_base_url: String,
 
+    #[serde(default = "default_max_versions_to_check")]
+    pub max_versions_to_check: usize,
+
     #[serde(default)]
     pub verbose: bool,
 }
@@ -46,6 +49,10 @@ fn default_pypi_base_url() -> String {
     "https://pypi.org/pypi".to_string()
 }
 
+fn default_max_versions_to_check() -> usize {
+    10
+}
+
 impl Default for Config {
     fn default() -> Self {
         Config {
@@ -54,6 +61,7 @@ impl Default for Config {
             max_retries: default_max_retries(),
             retry_delay_ms: default_retry_delay_ms(),
             pypi_base_url: default_pypi_base_url(),
+            max_versions_to_check: default_max_versions_to_check(),
             verbose: false,
         }
     }
@@ -126,6 +134,12 @@ impl Config {
         if let Ok(url) = std::env::var("RQCHECK_PYPI_URL") {
             self.pypi_base_url = url;
         }
+
+        if let Ok(val) = std::env::var("RQCHECK_MAX_VERSIONS") {
+            if let Ok(max_versions) = val.parse() {
+                self.max_versions_to_check = max_versions;
+            }
+        }
     }
 
     /// Validate configuration values
@@ -157,6 +171,7 @@ impl Config {
         &mut self,
         batch_size: Option<usize>,
         timeout: Option<u64>,
+        max_versions: Option<usize>,
         verbose: bool,
     ) {
         if let Some(size) = batch_size {
@@ -165,6 +180,10 @@ impl Config {
 
         if let Some(t) = timeout {
             self.timeout_seconds = t;
+        }
+
+        if let Some(max_v) = max_versions {
+            self.max_versions_to_check = max_v;
         }
 
         if verbose {
@@ -189,6 +208,7 @@ mod tests {
         assert_eq!(config.max_retries, 3);
         assert_eq!(config.retry_delay_ms, 1000);
         assert_eq!(config.pypi_base_url, "https://pypi.org/pypi");
+        assert_eq!(config.max_versions_to_check, 10);
         assert_eq!(config.verbose, false);
     }
 
@@ -276,10 +296,11 @@ verbose = true
     #[test]
     fn test_cli_override() {
         let mut config = Config::default();
-        config.apply_cli_overrides(Some(25), Some(90), true);
+        config.apply_cli_overrides(Some(25), Some(90), Some(20), true);
 
         assert_eq!(config.batch_size, 25);
         assert_eq!(config.timeout_seconds, 90);
+        assert_eq!(config.max_versions_to_check, 20);
         assert_eq!(config.verbose, true);
     }
 
@@ -323,7 +344,7 @@ verbose = true
         assert_eq!(config.batch_size, 30); // Env overrides file
 
         // Apply CLI override to 40
-        config.apply_cli_overrides(Some(40), None, false);
+        config.apply_cli_overrides(Some(40), None, None, false);
         assert_eq!(config.batch_size, 40); // CLI overrides env
 
         // Cleanup

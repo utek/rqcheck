@@ -1,7 +1,9 @@
 use crate::config::Config;
 use crate::error::{Result, RqCheckError};
+use crate::version;
 use futures::stream::{self, StreamExt};
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::time::Duration;
 
 #[derive(Deserialize, Debug)]
@@ -10,8 +12,16 @@ struct Info {
 }
 
 #[derive(Deserialize, Debug)]
+struct ReleaseInfo {
+    #[serde(default)]
+    yanked: bool,
+}
+
+#[derive(Deserialize, Debug)]
 struct PyPiResponse {
     info: Info,
+    #[serde(default)]
+    releases: HashMap<String, Vec<ReleaseInfo>>,
 }
 
 /// Package requirement data (owned version for async processing)
@@ -25,8 +35,10 @@ pub struct PackageRequirement {
 #[derive(Debug)]
 pub struct PackageCheckResult {
     pub name: String,
-    pub old_version: String,
-    pub new_version: String,
+    pub current_version: String,
+    pub latest_version: String,
+    pub latest_major_version: Option<String>,
+    pub latest_minor_version: Option<String>,
     pub has_update: bool,
 }
 
@@ -77,25 +89,40 @@ async fn check_single_package(
         log::debug!("Checking package: {} (current: {})", req.name, req.version);
     }
 
-    // Fetch latest version from PyPI with retries
-    let new_version = fetch_latest_version(&req.name, client, config).await?;
+    // Fetch PyPI response with releases data
+    let pypi_response = fetch_pypi_response(&req.name, client, config).await?;
 
-    let has_update = new_version != req.version;
+    // Convert ReleaseInfo to version::ReleaseInfo
+    let releases: HashMap<String, Vec<version::ReleaseInfo>> = pypi_response
+        .releases
+        .into_iter()
+        .map(|(version, infos)| {
+            (
+                version,
+                infos.into_iter().map(|info| version::ReleaseInfo { yanked: info.yanked }).collect(),
+            )
+        })
+        .collect();
+
+    // Analyze versions
+    let analysis = version::analyze_versions(&req.version, &releases, config.max_versions_to_check);
 
     Ok(PackageCheckResult {
         name: req.name,
-        old_version: req.version,
-        new_version,
-        has_update,
+        current_version: req.version,
+        latest_version: analysis.latest,
+        latest_major_version: analysis.latest_major,
+        latest_minor_version: analysis.latest_minor,
+        has_update: analysis.has_update,
     })
 }
 
-/// Fetch latest version from PyPI with retry logic
-async fn fetch_latest_version(
+/// Fetch PyPI response with retry logic
+async fn fetch_pypi_response(
     package_name: &str,
     client: &reqwest::Client,
     config: &Config,
-) -> Result<String> {
+) -> Result<PyPiResponse> {
     let url = format!("{}/{}/json", config.pypi_base_url, package_name);
 
     let mut last_error = None;
@@ -114,8 +141,8 @@ async fn fetch_latest_version(
             tokio::time::sleep(Duration::from_millis(delay)).await;
         }
 
-        match fetch_version_once(&url, package_name, client).await {
-            Ok(version) => return Ok(version),
+        match fetch_pypi_once(&url, package_name, client).await {
+            Ok(response) => return Ok(response),
             Err(e) => {
                 last_error = Some(e);
                 if config.verbose {
@@ -130,12 +157,12 @@ async fn fetch_latest_version(
     )))
 }
 
-/// Single attempt to fetch version from PyPI
-async fn fetch_version_once(
+/// Single attempt to fetch PyPI response
+async fn fetch_pypi_once(
     url: &str,
     package_name: &str,
     client: &reqwest::Client,
-) -> Result<String> {
+) -> Result<PyPiResponse> {
     let response = client
         .get(url)
         .send()
@@ -152,7 +179,7 @@ async fn fetch_version_once(
         });
     }
 
-    let pypi_response = response
+    let mut pypi_response = response
         .json::<PyPiResponse>()
         .await
         .map_err(|e| RqCheckError::NetworkError {
@@ -160,14 +187,12 @@ async fn fetch_version_once(
             source: e,
         })?;
 
-    let mut version = pypi_response.info.version;
-    
-    // Remove leading 'v' if present
-    if version.starts_with('v') || version.starts_with('V') {
-        version.remove(0);
+    // Remove leading 'v' if present in info.version
+    if pypi_response.info.version.starts_with('v') || pypi_response.info.version.starts_with('V') {
+        pypi_response.info.version.remove(0);
     }
 
-    Ok(version)
+    Ok(pypi_response)
 }
 
 #[cfg(test)]
@@ -188,11 +213,11 @@ mod tests {
     #[tokio::test]
     async fn test_fetch_success() {
         let mut server = Server::new_async().await;
-        
+
         let _m = server.mock("GET", "/requests/json")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"{"info": {"version": "2.32.0"}}"#)
+            .with_body(r#"{"info": {"version": "2.32.0"}, "releases": {"2.32.0": [{"yanked": false}], "2.31.0": [{"yanked": false}]}}"#)
             .create_async()
             .await;
 
@@ -200,15 +225,15 @@ mod tests {
         let mut config = Config::default();
         config.pypi_base_url = server.url();
 
-        let result = fetch_latest_version("requests", &client, &config).await;
+        let result = fetch_pypi_response("requests", &client, &config).await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "2.32.0");
+        assert_eq!(result.unwrap().info.version, "2.32.0");
     }
 
     #[tokio::test]
     async fn test_fetch_404() {
         let mut server = Server::new_async().await;
-        
+
         let _m = server.mock("GET", "/nonexistent/json")
             .with_status(404)
             .create_async()
@@ -218,7 +243,7 @@ mod tests {
         let mut config = Config::default();
         config.pypi_base_url = server.url();
 
-        let result = fetch_latest_version("nonexistent", &client, &config).await;
+        let result = fetch_pypi_response("nonexistent", &client, &config).await;
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), RqCheckError::HttpError { .. }));
     }
@@ -226,11 +251,11 @@ mod tests {
     #[tokio::test]
     async fn test_version_normalization() {
         let mut server = Server::new_async().await;
-        
+
         let _m = server.mock("GET", "/package/json")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"{"info": {"version": "v1.2.3"}}"#)
+            .with_body(r#"{"info": {"version": "v1.2.3"}, "releases": {"v1.2.3": [{"yanked": false}]}}"#)
             .create_async()
             .await;
 
@@ -238,8 +263,8 @@ mod tests {
         let mut config = Config::default();
         config.pypi_base_url = server.url();
 
-        let result = fetch_latest_version("package", &client, &config).await;
+        let result = fetch_pypi_response("package", &client, &config).await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "1.2.3"); // 'v' prefix removed
+        assert_eq!(result.unwrap().info.version, "1.2.3"); // 'v' prefix removed
     }
 }
